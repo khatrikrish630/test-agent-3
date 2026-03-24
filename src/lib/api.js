@@ -39,6 +39,24 @@ export const replyToComment = (commentId, message) =>
     body: { message },
   });
 
+export const commentOnPost = (postId, message) =>
+  apiCall(`/posts/${postId}/comment`, {
+    method: 'POST',
+    body: { message },
+  });
+
+// ─── Saved Posts ──────────────────────────────────────────────────────────────
+export const getSavedPosts = () => apiCall('/saved-posts');
+
+export const savePost = (post) =>
+  apiCall('/saved-posts', {
+    method: 'POST',
+    body: post,
+  });
+
+export const deleteSavedPost = (id) =>
+  apiCall(`/saved-posts/${id}`, { method: 'DELETE' });
+
 // ─── Post Queue ───────────────────────────────────────────────────────────────
 export const getQueue = () => apiCall('/queue');
 

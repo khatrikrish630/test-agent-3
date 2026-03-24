@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { Badge, Card, Button, TabBar, TextArea, Input } from "./components/UI.jsx";
-import { generateContent, publishToFacebook, checkHealth, toggleScheduler, getSchedulerStatus } from "./lib/api.js";
+import { generateContent, publishToFacebook, checkHealth, toggleScheduler, getSchedulerStatus, commentOnPost, savePost, deleteSavedPost, getSavedPosts } from "./lib/api.js";
 import { RUSSELL_BRUNSON_FRAMEWORKS, GHL_TOPICS, DREAM_CUSTOMER_KEYWORDS, POST_TIMES } from "./lib/constants.js";
 
 export default function App() {
@@ -23,6 +23,8 @@ export default function App() {
   const [savedPosts, setSavedPosts] = useState([]);
   const [isScanning, setIsScanning] = useState(false);
   const [postReplies, setPostReplies] = useState({});
+  const [bookmarkedPosts, setBookmarkedPosts] = useState([]);
+  const [replyPostStates, setReplyPostStates] = useState({}); // { [postId]: { loading, error, success } }
 
   // Leads state
   const [dreamAvatar, setDreamAvatar] = useState({ keywords: "GoHighLevel, GHL, funnel builder, marketing automation, CRM setup", location: "", industry: "Digital Marketing Agency" });
@@ -155,6 +157,43 @@ Rules: Under 80 words, genuine, positions you as expert, ends with soft CTA. No 
       navigator.clipboard.writeText(reply);
       setPostReplies((p) => ({ ...p, [postId]: { ...p[postId], copied: true } }));
       setTimeout(() => setPostReplies((p) => ({ ...p, [postId]: { ...p[postId], copied: false } })), 2000);
+    }
+  }, [postReplies]);
+
+  // ─── SAVE POST (bookmark) ────────────────────────────────────────────────
+  const handleSavePost = useCallback(async (post) => {
+    const alreadySaved = bookmarkedPosts.find((p) => p.id === post.id);
+    if (alreadySaved) return;
+    try {
+      await savePost(post);
+      setBookmarkedPosts((prev) => [{ ...post, savedAt: new Date().toISOString() }, ...prev]);
+    } catch (err) {
+      setBookmarkedPosts((prev) => [{ ...post, savedAt: new Date().toISOString() }, ...prev]);
+    }
+  }, [bookmarkedPosts]);
+
+  const handleRemoveSavedPost = useCallback(async (postId) => {
+    try {
+      await deleteSavedPost(postId);
+    } catch (e) {}
+    setBookmarkedPosts((prev) => prev.filter((p) => p.id !== postId));
+  }, []);
+
+  // ─── POST REPLY DIRECTLY TO FACEBOOK ─────────────────────────────────────
+  const handlePostReplyToFacebook = useCallback(async (post) => {
+    const reply = postReplies[post.id]?.reply;
+    if (!reply) return;
+
+    setReplyPostStates((p) => ({ ...p, [post.id]: { loading: true, error: null, success: false } }));
+    try {
+      const fbPostId = post.fbPostId || post.id;
+      await commentOnPost(fbPostId, reply);
+      setReplyPostStates((p) => ({ ...p, [post.id]: { loading: false, error: null, success: true } }));
+      setTimeout(() => {
+        setReplyPostStates((p) => ({ ...p, [post.id]: { ...p[post.id], success: false } }));
+      }, 3000);
+    } catch (err) {
+      setReplyPostStates((p) => ({ ...p, [post.id]: { loading: false, error: err.message, success: false } }));
     }
   }, [postReplies]);
 
@@ -357,6 +396,34 @@ Rules: Under 80 words, genuine, positions you as expert, ends with soft CTA. No 
         <Button variant="primary" onClick={handleScanGroups} disabled={isScanning}>{isScanning ? "⏳ Scanning Groups..." : "🔍 Scan Groups Now"}</Button>
       </Card>
 
+      {/* SAVED / BOOKMARKED POSTS */}
+      {bookmarkedPosts.length > 0 && (
+        <Card>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ color: "#f9fafb", fontSize: 18, fontWeight: 600, margin: 0, fontFamily: "'Instrument Serif', serif" }}>📌 Saved Posts ({bookmarkedPosts.length})</h3>
+            <Badge variant="warning">Bookmarked</Badge>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {bookmarkedPosts.map((post) => (
+              <div key={post.id} style={{ padding: 16, background: "rgba(251,191,36,0.04)", border: "1px solid rgba(251,191,36,0.12)", borderRadius: 12, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ color: "#fbbf24", fontSize: 13, fontWeight: 600 }}>{post.authorName}</span>
+                    <span style={{ color: "#4b5563", fontSize: 11 }}>{post.groupName}</span>
+                  </div>
+                  <p style={{ color: "#d1d5db", fontSize: 13, lineHeight: 1.6, margin: 0 }}>{post.content}</p>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    {post.matchedKeywords?.map((kw) => <Badge key={kw} variant="info">{kw}</Badge>)}
+                  </div>
+                </div>
+                <Button variant="danger" size="sm" onClick={() => handleRemoveSavedPost(post.id)}>✕</Button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* MATCHED POSTS */}
       {savedPosts.length > 0 && (
         <Card>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -376,13 +443,22 @@ Rules: Under 80 words, genuine, positions you as expert, ends with soft CTA. No 
                 <p style={{ color: "#d1d5db", fontSize: 13, lineHeight: 1.7, margin: "12px 0" }}>{post.content}</p>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>{post.matchedKeywords.map((kw) => <Badge key={kw} variant="info">{kw}</Badge>)}</div>
 
+                {/* ACTION BUTTONS */}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Button variant="success" size="sm" onClick={() => handleGenerateReply(post)} disabled={postReplies[post.id]?.loading}>
                     {postReplies[post.id]?.loading ? "⏳ Generating..." : postReplies[post.id]?.reply ? "💬 Reply Ready" : "💬 Generate Reply"}
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(post.content)}>📌 Save Post</Button>
+                  <Button
+                    variant={bookmarkedPosts.find((p) => p.id === post.id) ? "warning" : "secondary"}
+                    size="sm"
+                    onClick={() => handleSavePost(post)}
+                    disabled={!!bookmarkedPosts.find((p) => p.id === post.id)}
+                  >
+                    {bookmarkedPosts.find((p) => p.id === post.id) ? "✅ Saved" : "📌 Save Post"}
+                  </Button>
                 </div>
 
+                {/* LOADING STATE */}
                 {postReplies[post.id]?.loading && (
                   <div style={{ marginTop: 12, padding: 16, background: "rgba(96,165,250,0.06)", border: "1px solid rgba(96,165,250,0.15)", borderRadius: 10 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -392,6 +468,7 @@ Rules: Under 80 words, genuine, positions you as expert, ends with soft CTA. No 
                   </div>
                 )}
 
+                {/* GENERATED REPLY + REPLY TO FACEBOOK BUTTON */}
                 {postReplies[post.id]?.reply && !postReplies[post.id]?.loading && (
                   <div style={{ marginTop: 12, padding: 16, background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.15)", borderRadius: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -402,10 +479,42 @@ Rules: Under 80 words, genuine, positions you as expert, ends with soft CTA. No 
                       </div>
                     </div>
                     <div style={{ color: "#e5e7eb", fontSize: 14, lineHeight: 1.7, whiteSpace: "pre-wrap", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)" }}>{postReplies[post.id].reply}</div>
-                    <p style={{ color: "#6b7280", fontSize: 11, marginTop: 8, marginBottom: 0 }}>Copy this reply and paste it as a comment on their post in the Facebook group.</p>
+
+                    {/* REPLY ON FACEBOOK BUTTON */}
+                    <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => handlePostReplyToFacebook(post)}
+                        disabled={replyPostStates[post.id]?.loading || replyPostStates[post.id]?.success}
+                      >
+                        {replyPostStates[post.id]?.loading
+                          ? "⏳ Posting to Facebook..."
+                          : replyPostStates[post.id]?.success
+                          ? "✅ Reply Posted!"
+                          : "🚀 Reply on Facebook"}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => handleCopyReply(post.id)}>
+                        📋 Copy Instead
+                      </Button>
+                    </div>
+
+                    {replyPostStates[post.id]?.success && (
+                      <div style={{ marginTop: 8, padding: 10, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)", borderRadius: 8 }}>
+                        <span style={{ color: "#34d399", fontSize: 12 }}>Your reply has been posted as a comment on their Facebook post.</span>
+                      </div>
+                    )}
+
+                    {replyPostStates[post.id]?.error && (
+                      <div style={{ marginTop: 8, padding: 10, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 8 }}>
+                        <span style={{ color: "#f87171", fontSize: 12 }}>{replyPostStates[post.id].error}</span>
+                        <p style={{ color: "#6b7280", fontSize: 11, marginTop: 4, marginBottom: 0 }}>This requires the actual Facebook Post ID. For group posts found via the Graph API, the post ID will be used automatically. For demo posts, use the Copy button instead.</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
+                {/* ERROR STATE */}
                 {postReplies[post.id]?.error && !postReplies[post.id]?.loading && (
                   <div style={{ marginTop: 12, padding: 12, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 10 }}>
                     <span style={{ color: "#f87171", fontSize: 13 }}>{postReplies[post.id].error}</span>
@@ -476,7 +585,7 @@ Rules: Under 80 words, genuine, positions you as expert, ends with soft CTA. No 
   const tabs = [
     { id: "content", label: "Content Engine", icon: "✍️" },
     { id: "schedule", label: "Schedule", icon: "📅", count: postQueue.length },
-    { id: "groups", label: "Group Monitor", icon: "🔍", count: savedPosts.length },
+    { id: "groups", label: "Group Monitor", icon: "🔍", count: savedPosts.length + bookmarkedPosts.length },
     { id: "leads", label: "Lead Scraper", icon: "🎯", count: scrapedLeads.length },
   ];
 

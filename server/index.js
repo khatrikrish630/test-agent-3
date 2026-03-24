@@ -152,6 +152,54 @@ app.post('/api/comments/:commentId/reply', async (req, res) => {
   }
 });
 
+// ─── COMMENT ON A POST (reply to a group/page post) ──────────────────────────
+app.post('/api/posts/:postId/comment', async (req, res) => {
+  try {
+    const token = process.env.FB_ACCESS_TOKEN;
+    if (!token) return res.status(400).json({ error: 'FB_ACCESS_TOKEN not set.' });
+
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Comment message is required.' });
+
+    const fbResponse = await fetch(
+      `https://graph.facebook.com/v19.0/${req.params.postId}/comments`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, access_token: token }),
+      }
+    );
+    const data = await fbResponse.json();
+
+    if (data.error) {
+      console.error('Facebook comment error:', data.error);
+      return res.status(400).json({ error: data.error.message });
+    }
+    console.log(`💬 Comment posted on ${req.params.postId}: ${data.id}`);
+    res.json({ success: true, commentId: data.id });
+  } catch (err) {
+    console.error('Comment error:', err.message);
+    res.status(500).json({ error: 'Network error posting comment. Check your connection.' });
+  }
+});
+
+// ─── SAVED POSTS STORE ───────────────────────────────────────────────────────
+let savedPostsStore = [];
+
+app.get('/api/saved-posts', (req, res) => res.json({ posts: savedPostsStore }));
+
+app.post('/api/saved-posts', (req, res) => {
+  const post = { ...req.body, savedAt: new Date().toISOString() };
+  savedPostsStore.unshift(post);
+  console.log(`📌 Saved post from ${post.authorName}`);
+  res.json({ success: true, post });
+});
+
+app.delete('/api/saved-posts/:id', (req, res) => {
+  savedPostsStore = savedPostsStore.filter((p) => p.id !== req.params.id);
+  res.json({ success: true });
+});
+
 // ─── POST QUEUE MANAGEMENT ───────────────────────────────────────────────────
 app.get('/api/queue', (req, res) => res.json({ queue: postQueue, history: postHistory }));
 
